@@ -149,7 +149,7 @@ void mogrix_atomic_clear(volatile void *mem, int order)
 T mogrix_atomic_load_##N(const volatile void *, int) __asm__("__atomic_load_" #N); \
 void mogrix_atomic_store_##N(volatile void *, T, int) __asm__("__atomic_store_" #N); \
 T mogrix_atomic_exchange_##N(volatile void *, T, int) __asm__("__atomic_exchange_" #N); \
-int mogrix_atomic_compare_exchange_##N(volatile void *, void *, T, int, int) \
+int mogrix_atomic_compare_exchange_##N(volatile void *, void *, T, int, int, int) \
     __asm__("__atomic_compare_exchange_" #N); \
 T mogrix_atomic_load_##N(const volatile void *p, int o) \
 { T v; mogrix_atomic_load(sizeof(T), p, &v, o); return v; } \
@@ -157,8 +157,8 @@ void mogrix_atomic_store_##N(volatile void *p, T v, int o) \
 { mogrix_atomic_store(sizeof(T), p, &v, o); } \
 T mogrix_atomic_exchange_##N(volatile void *p, T v, int o) \
 { T old; mogrix_atomic_exchange(sizeof(T), p, &v, &old, o); return old; } \
-int mogrix_atomic_compare_exchange_##N(volatile void *p, void *e, T d, int so, int fo) \
-{ return mogrix_atomic_compare_exchange(sizeof(T), p, e, &d, so, fo); }
+int mogrix_atomic_compare_exchange_##N(volatile void *p, void *e, T d, int weak, int so, int fo) \
+{ (void)weak; return mogrix_atomic_compare_exchange(sizeof(T), p, e, &d, so, fo); }
 
 DECL_LOAD_STORE(1, u8)
 DECL_LOAD_STORE(2, u16)
