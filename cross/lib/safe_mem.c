@@ -2,17 +2,21 @@
  * Byte-safe memory/string routines for IRIX.
  *
  * Some optimized IRIX libc/libstdc++ routines perform aligned word reads past
- * the logical end of a buffer.  That is normally harmless, but can SIGSEGV at
- * a page boundary.  These implementations deliberately read one byte at a
- * time.  The std::_Hash_bytes entry point uses the 32-bit MurmurHash2 variant
- * used by libstdc++ on 32-bit targets, but also performs only byte reads.
+ * the logical end of a buffer. That is normally harmless, but can SIGSEGV at
+ * a page boundary. These implementations deliberately read one byte at a
+ * time. The std::_Hash_bytes entry point mirrors GCC libstdc++'s 32-bit
+ * MurmurHash2 implementation while avoiding its native-width memcpy load.
+ *
+ * IRIX/MIPS N32 is big-endian. GCC's unaligned_load() memcpy into size_t uses
+ * native byte order, so the four-byte main-loop load below must assemble bytes
+ * big-endian to preserve libstdc++ hash behaviour. The 1-3 byte tail is kept
+ * exactly in the order used by GCC's 32-bit implementation.
  *
  * This file is freestanding on purpose: build-runtime-objects.sh compiles it
  * with raw clang rather than irix-cc.
  */
 
 typedef __SIZE_TYPE__ size_t;
-
 typedef unsigned char u8;
 
 int memcmp(const void *lhs, const void *rhs, size_t n)
@@ -66,10 +70,11 @@ size_t mogrix_hash_bytes(const void *ptr, size_t len, size_t seed)
     size_t h = seed ^ len;
 
     while (len >= 4) {
-        size_t k = (size_t)data[0]
-                 | ((size_t)data[1] << 8)
-                 | ((size_t)data[2] << 16)
-                 | ((size_t)data[3] << 24);
+        /* Native 32-bit load on big-endian MIPS, expressed byte-safely. */
+        size_t k = ((size_t)data[0] << 24)
+                 | ((size_t)data[1] << 16)
+                 | ((size_t)data[2] << 8)
+                 | (size_t)data[3];
 
         k *= m;
         k ^= k >> 24;
