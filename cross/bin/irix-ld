@@ -219,6 +219,11 @@ else
         case "$a" in -o) next_is_output=1 ;; esac
     done
 
+    # Executables need the same quad-float compiler runtime as shared objects.
+    # The old libsoft_float_stubs.a path predates the current libgcc_s runtime,
+    # which already provides the required compiler-rt soft-float builtins.
+    LIBGCC_S_FLAG="-lgcc_s -lpthread"
+
     # -m elf32btsmipn32_irix: Activate IRIX target defaults in LLD.
     # --export-dynamic-symbol=__rld_obj_head: IRIX rld symbol from crt1.o.
     # LLD doesn't export COMMON symbols to .dynsym by default.
@@ -238,7 +243,7 @@ else
       -L$SYSROOT/lib32 \
       -L$SYSROOT/usr/lib32 \
       $filtered_args \
-      -lsoft_float_stubs \
+      $LIBGCC_S_FLAG \
       -lc \
       $CRTEND \
       $CRTN
