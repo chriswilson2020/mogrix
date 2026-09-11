@@ -3,8 +3,10 @@
 #
 # GCC's libstdc++ source tree is not laid out like the installed include tree:
 # public headers are split across include/std, include/c_global and several
-# subdirectories.  This script reconstructs the installed-style tree and then
-# overlays Mogrix's tracked IRIX-specific files.
+# subdirectories, while generated/selected target support headers such as
+# bits/os_defines.h and bits/cpu_defines.h come from libstdc++-v3/config.
+# This script reconstructs the installed-style tree and then overlays Mogrix's
+# tracked IRIX-specific files.
 
 set -euo pipefail
 
@@ -13,15 +15,26 @@ STAGING="${SGUG_STAGING:-/opt/sgug-staging/usr/sgug}"
 CACHE="${MOGRIX_GCC_CACHE:-$ROOT/cross/build-runtime/gcc-9.5.0}"
 GCC_URL="${MOGRIX_GCC_URL:-https://ftp.gnu.org/gnu/gcc/gcc-9.5.0/gcc-9.5.0.tar.xz}"
 INCLUDE_SRC="$CACHE/libstdc++-v3/include"
+CONFIG_SRC="$CACHE/libstdc++-v3/config"
 DEST="$STAGING/include/c++/9"
+TARGET_BITS="$DEST/mips-sgi-irix6.5/bits"
 
-have_source_tree() {
+have_public_headers() {
     [[ -f "$INCLUDE_SRC/std/vector" && \
        -f "$INCLUDE_SRC/std/stdexcept" && \
        -f "$INCLUDE_SRC/c_global/cstdio" ]]
 }
 
-if ! have_source_tree; then
+have_support_headers() {
+    [[ -f "$CONFIG_SRC/os/generic/os_defines.h" && \
+       -f "$CONFIG_SRC/cpu/generic/cpu_defines.h" && \
+       -f "$CONFIG_SRC/cpu/generic/cxxabi_tweaks.h" && \
+       -f "$CONFIG_SRC/cpu/generic/atomic_word.h" && \
+       -f "$CONFIG_SRC/cpu/generic/atomicity.h" && \
+       -f "$CONFIG_SRC/os/generic/error_constants.h" ]]
+}
+
+fetch_needed_source() {
     command -v curl >/dev/null 2>&1 || {
         echo "ERROR: curl is required to obtain GCC 9.5.0 headers" >&2
         exit 1
@@ -31,20 +44,39 @@ if ! have_source_tree; then
         exit 1
     }
 
-    echo "GCC 9.5.0 libstdc++ headers are not cached; downloading source..."
+    echo "GCC 9.5.0 libstdc++ header sources are incomplete; downloading source..."
     mkdir -p "$(dirname "$CACHE")"
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
 
     curl -fL "$GCC_URL" -o "$tmp/gcc-9.5.0.tar.xz"
-    rm -rf "$CACHE/libstdc++-v3/include"
-    tar -xJf "$tmp/gcc-9.5.0.tar.xz" \
-        -C "$(dirname "$CACHE")" \
-        "gcc-9.5.0/libstdc++-v3/include"
+
+    if ! have_public_headers; then
+        rm -rf "$CACHE/libstdc++-v3/include"
+        tar -xJf "$tmp/gcc-9.5.0.tar.xz" \
+            -C "$(dirname "$CACHE")" \
+            "gcc-9.5.0/libstdc++-v3/include"
+    fi
+
+    if ! have_support_headers; then
+        mkdir -p "$CONFIG_SRC/os" "$CONFIG_SRC/cpu"
+        tar -xJf "$tmp/gcc-9.5.0.tar.xz" \
+            -C "$(dirname "$CACHE")" \
+            "gcc-9.5.0/libstdc++-v3/config/os/generic" \
+            "gcc-9.5.0/libstdc++-v3/config/cpu/generic"
+    fi
+}
+
+if ! have_public_headers || ! have_support_headers; then
+    fetch_needed_source
 fi
 
-if ! have_source_tree; then
-    echo "ERROR: GCC header source is incomplete: $INCLUDE_SRC" >&2
+if ! have_public_headers; then
+    echo "ERROR: GCC public header source is incomplete: $INCLUDE_SRC" >&2
+    exit 1
+fi
+if ! have_support_headers; then
+    echo "ERROR: GCC target-support header source is incomplete: $CONFIG_SRC" >&2
     exit 1
 fi
 
@@ -63,10 +95,29 @@ for dir in bits backward decimal experimental ext parallel profile tr1; do
 done
 
 # Overlay the files Mogrix intentionally tracks for the IRIX target, including
-# target bits/c++config.h and local header fixes such as ext/string_conversions.h.
+# the configured target bits/c++config.h and local fixes.
 if [[ -d "$ROOT/cross/include/c++/9" ]]; then
     cp -R "$ROOT/cross/include/c++/9"/. "$DEST"/
 fi
+
+# c++config.h includes these as <bits/...>, but they are not in the public
+# libstdc++ include tree. GCC normally installs selected files from config/
+# into the target-specific bits directory. GCC 9 no longer carries an IRIX
+# os directory, so use its generic OS/CPU support around Mogrix's already
+# configured IRIX c++config.h.
+mkdir -p "$TARGET_BITS"
+install -m 0644 "$CONFIG_SRC/os/generic/os_defines.h" \
+    "$TARGET_BITS/os_defines.h"
+install -m 0644 "$CONFIG_SRC/cpu/generic/cpu_defines.h" \
+    "$TARGET_BITS/cpu_defines.h"
+install -m 0644 "$CONFIG_SRC/cpu/generic/cxxabi_tweaks.h" \
+    "$TARGET_BITS/cxxabi_tweaks.h"
+install -m 0644 "$CONFIG_SRC/cpu/generic/atomic_word.h" \
+    "$TARGET_BITS/atomic_word.h"
+install -m 0644 "$CONFIG_SRC/cpu/generic/atomicity.h" \
+    "$TARGET_BITS/atomicity.h"
+install -m 0644 "$CONFIG_SRC/os/generic/error_constants.h" \
+    "$TARGET_BITS/error_constants.h"
 
 for header in cstdio stdexcept vector string; do
     if [[ ! -f "$DEST/$header" ]]; then
@@ -75,9 +126,11 @@ for header in cstdio stdexcept vector string; do
     fi
 done
 
-if [[ ! -f "$DEST/mips-sgi-irix6.5/bits/c++config.h" ]]; then
-    echo "ERROR: IRIX target c++config.h was not installed" >&2
-    exit 1
-fi
+for header in c++config.h os_defines.h cpu_defines.h cxxabi_tweaks.h atomic_word.h atomicity.h error_constants.h; do
+    if [[ ! -f "$TARGET_BITS/$header" ]]; then
+        echo "ERROR: missing target libstdc++ support header: $TARGET_BITS/$header" >&2
+        exit 1
+    fi
+done
 
 echo "Installed GCC 9.5.0 libstdc++ headers to $DEST"
