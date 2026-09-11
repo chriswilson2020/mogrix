@@ -50,3 +50,10 @@ def test_bootstrap_predeploys_real_cxx_wrapper() -> None:
     bootstrap = (ROOT / "scripts/bootstrap-cross.sh").read_text()
     assert 'cross/bin/irix-cxx' in bootstrap
     assert 'install -m 0755' in bootstrap
+
+
+def test_safe_hash_preserves_big_endian_n32_word_order() -> None:
+    safe_mem = (ROOT / "cross/lib/safe_mem.c").read_text()
+    assert "((size_t)data[0] << 24)" in safe_mem
+    assert "((size_t)data[1] << 16)" in safe_mem
+    assert "((size_t)data[2] << 8)" in safe_mem
