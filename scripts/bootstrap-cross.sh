@@ -103,7 +103,7 @@ fi
 # generic GCC 9 headers (<cstdio>, <vector>, <stdexcept>, etc.) must come from
 # matching GCC 9.5.0 source.  Install them, then overlay Mogrix's target fixes.
 echo "Installing GCC 9.5.0 C++ headers..."
-"$ROOT/scripts/install-libstdcxx-headers.sh"
+bash "$ROOT/scripts/install-libstdcxx-headers.sh"
 
 link_sysroot_dir() {
     local target="$1"
@@ -130,11 +130,11 @@ link_sysroot_dir "$SYSROOT/usr/lib32" "$STAGING_ROOT/usr/lib32"
 link_sysroot_dir "$SYSROOT/lib32" "$STAGING_ROOT/lib32"
 
 echo "Building/deploying runtime objects..."
-"$ROOT/scripts/build-runtime-objects.sh"
+bash "$ROOT/scripts/build-runtime-objects.sh"
 
 echo
 echo "Bootstrap complete."
 echo "C wrapper:   $STAGING/bin/irix-cc"
 echo "C++ wrapper: $STAGING/bin/irix-cxx"
 echo "Runtime:     $STAGING/lib32"
-echo "Next:        $ROOT/scripts/test-cross-runtime.sh"
+echo "Next:        bash $ROOT/scripts/test-cross-runtime.sh"
