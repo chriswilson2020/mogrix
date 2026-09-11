@@ -38,6 +38,9 @@ compile long_double \
 compile atomic_smoke \
     "$CC" "$ROOT/tests/runtime/atomic_smoke.c" -L"$STAGING/lib32" -latomic -o "$OUT/atomic_smoke"
 
+compile atomic_abi \
+    "$CC" "$ROOT/tests/runtime/atomic_abi.c" -L"$STAGING/lib32" -latomic -o "$OUT/atomic_abi"
+
 compile hello_cpp \
     "$CXX" "$ROOT/tests/runtime/hello_cpp.cpp" -o "$OUT/hello_cpp"
 
