@@ -21,6 +21,9 @@ def test_required_runtime_sources_are_tracked() -> None:
         ROOT / "compat/runtime/libatomic_stub.c",
         ROOT / "compat/runtime/muloti4.c",
         ROOT / "compat/runtime/divti3.c",
+        ROOT / "compat/runtime/stpcpy.c",
+        ROOT / "compat/runtime/stpncpy.c",
+        ROOT / "compat/runtime/spawn.c",
         ROOT / "cross/irix-shared.lds",
         ROOT / "cross/bin/irix-cxx",
     ]
@@ -57,3 +60,15 @@ def test_safe_hash_preserves_big_endian_n32_word_order() -> None:
     assert "((size_t)data[0] << 24)" in safe_mem
     assert "((size_t)data[1] << 16)" in safe_mem
     assert "((size_t)data[2] << 8)" in safe_mem
+
+
+def test_libatomic_sized_compare_exchange_has_weak_parameter() -> None:
+    atomic = (ROOT / "compat/runtime/libatomic_stub.c").read_text()
+    assert "T d, int weak, int so, int fo" in atomic
+    assert "(void)weak" in atomic
+
+
+def test_direct_libatomic_abi_smoke_test_is_built() -> None:
+    script = (ROOT / "scripts/test-cross-runtime.sh").read_text()
+    assert "tests/runtime/atomic_abi.c" in script
+    assert "-latomic" in script
