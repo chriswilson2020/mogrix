@@ -1,52 +1,134 @@
 #!/bin/bash
 # Reproducible clean bootstrap for the Mogrix IRIX cross environment.
 #
-# This works around two legacy setup-cross problems in current main:
-#   1. setup-cross requires libsoft_float_stubs.a before it deploys irix-cc,
-#      while the runtime builder needs irix-cc.
-#   2. setup-cross does not deploy the tracked cross/bin/irix-cxx wrapper; it
-#      creates irix-cxx by copying irix-cc, which cannot compile .cpp/.cc/.cxx.
-#
-# Current Mogrix links soft-float/compiler builtins from libgcc_s.so.1.  The
-# seeded archive below exists only to get through the stale setup-cross check.
+# This intentionally does not call `mogrix setup-cross`: current main checks for
+# libsoft_float_stubs.a before deploying irix-cc and also synthesizes irix-cxx
+# by copying the C wrapper.  Both behaviours are stale relative to the tracked
+# libgcc_s runtime and the real cross/bin/irix-cxx wrapper.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STAGING="${SGUG_STAGING:-/opt/sgug-staging/usr/sgug}"
+STAGING_ROOT="$(dirname "$(dirname "$STAGING")")"
+SYSROOT="${IRIX_SYSROOT:-/opt/irix-sysroot}"
 CROSS="${IRIX_CROSS_BINDIR:-/opt/cross/bin}"
-AR="${CROSS}/llvm-ar"
 
-if [[ ! -x "$AR" ]]; then
-    echo "ERROR: llvm-ar not found at $AR" >&2
-    exit 1
+need_file() {
+    if [[ ! -e "$1" ]]; then
+        echo "ERROR: required file missing: $1" >&2
+        exit 1
+    fi
+}
+
+need_exec() {
+    if [[ ! -x "$1" ]]; then
+        echo "ERROR: required executable missing: $1" >&2
+        exit 1
+    fi
+}
+
+need_file "$SYSROOT/usr/include/stdio.h"
+need_file "$SYSROOT/usr/lib32/libc.so"
+need_exec "$CROSS/clang"
+need_exec "$CROSS/ld.lld-irix"
+need_exec "$CROSS/llvm-ar"
+
+mkdir -p \
+    "$STAGING/bin" \
+    "$STAGING/include" \
+    "$STAGING/lib32/pkgconfig" \
+    "$STAGING_ROOT/usr"
+
+install_tool() {
+    local name="$1"
+    if [[ -f "$ROOT/cross/bin/$name" ]]; then
+        install -m 0755 "$ROOT/cross/bin/$name" "$STAGING/bin/$name"
+        echo "  tool: $name"
+    fi
+}
+
+echo "Deploying compiler/linker wrappers..."
+for tool in \
+    irix-cc irix-cxx irix-ld \
+    fix-anon-relocs strip-verneed \
+    irix-cxx-libcxx strip-eh-relocs
+do
+    install_tool "$tool"
+done
+
+if [[ -f "$ROOT/cross/bin/irix-cxx-restrict-fix.h" ]]; then
+    install -m 0644 "$ROOT/cross/bin/irix-cxx-restrict-fix.h" \
+        "$STAGING/bin/irix-cxx-restrict-fix.h"
 fi
 
-mkdir -p "$STAGING/bin" "$STAGING/lib32"
-
-# Predeploy the real C++ wrapper. setup-cross only synthesizes irix-cxx when the
-# destination is missing, so this prevents it from replacing C++ support with a
-# copy of the C-only wrapper.
-install -m 0755 "$ROOT/cross/bin/irix-cxx" "$STAGING/bin/irix-cxx"
-
-LEGACY_ARCHIVE="$STAGING/lib32/libsoft_float_stubs.a"
-if [[ ! -f "$LEGACY_ARCHIVE" ]]; then
-    echo "Seeding legacy bootstrap archive: $LEGACY_ARCHIVE"
-    "$AR" rcs "$LEGACY_ARCHIVE"
+if [[ -f "$ROOT/cross/rpmmacros.irix" ]]; then
+    install -m 0644 "$ROOT/cross/rpmmacros.irix" "$STAGING_ROOT/rpmmacros.irix"
 fi
 
-echo "Running mogrix setup-cross..."
-(
-    cd "$ROOT"
-    uv run mogrix setup-cross
-)
+if [[ -f "$ROOT/cross/pkgconfig/pthread-stubs.pc" ]]; then
+    install -m 0644 "$ROOT/cross/pkgconfig/pthread-stubs.pc" \
+        "$STAGING/lib32/pkgconfig/pthread-stubs.pc"
+fi
+
+echo "Deploying tracked runtime libraries..."
+for lib in libgcc_s.so.1 libstdc++.so.6 libc++.so.1 libc++abi.so.1; do
+    if [[ -f "$ROOT/cross/lib32/$lib" ]]; then
+        install -m 0644 "$ROOT/cross/lib32/$lib" "$STAGING/lib32/$lib"
+        echo "  runtime: $lib"
+    fi
+done
+
+link_runtime() {
+    local target="$1"
+    local link="$2"
+    if [[ -e "$STAGING/lib32/$target" ]]; then
+        ln -sfn "$target" "$STAGING/lib32/$link"
+    fi
+}
+link_runtime libgcc_s.so.1 libgcc_s.so
+link_runtime libstdc++.so.6 libstdc++.so
+link_runtime libc++.so.1 libc++.so
+link_runtime libc++abi.so.1 libc++abi.so
+
+echo "Deploying compatibility headers..."
+rm -rf "$STAGING/include/dicl-clang-compat" "$STAGING/include/mogrix-compat"
+cp -R "$ROOT/cross/include/dicl-clang-compat" "$STAGING/include/dicl-clang-compat"
+cp -R "$ROOT/compat/include/mogrix-compat" "$STAGING/include/mogrix-compat"
+if [[ -f "$ROOT/cross/include/irix-compat.h" ]]; then
+    install -m 0644 "$ROOT/cross/include/irix-compat.h" "$STAGING/include/irix-compat.h"
+fi
+
+link_sysroot_dir() {
+    local target="$1"
+    local link="$2"
+
+    need_file "$target"
+    if [[ -L "$link" ]]; then
+        rm -f "$link"
+    elif [[ -e "$link" ]]; then
+        if [[ -d "$link" && -z "$(ls -A "$link" 2>/dev/null)" ]]; then
+            rmdir "$link"
+        else
+            echo "ERROR: refusing to replace non-empty path: $link" >&2
+            exit 1
+        fi
+    fi
+    mkdir -p "$(dirname "$link")"
+    ln -s "$target" "$link"
+}
+
+echo "Linking IRIX sysroot into staging..."
+link_sysroot_dir "$SYSROOT/usr/include" "$STAGING_ROOT/usr/include"
+link_sysroot_dir "$SYSROOT/usr/lib32" "$STAGING_ROOT/usr/lib32"
+link_sysroot_dir "$SYSROOT/lib32" "$STAGING_ROOT/lib32"
 
 echo "Building/deploying runtime objects..."
 "$ROOT/scripts/build-runtime-objects.sh"
 
 echo
-
 echo "Bootstrap complete."
 echo "C wrapper:   $STAGING/bin/irix-cc"
 echo "C++ wrapper: $STAGING/bin/irix-cxx"
-echo "Run scripts/test-cross-runtime.sh for compile/link smoke tests."
+echo "Runtime:     $STAGING/lib32"
+echo "Next:        $ROOT/scripts/test-cross-runtime.sh"
