@@ -6,8 +6,8 @@
  *
  * Supports TWO unwinder backends:
  *   - GCC libgcc_s: uses __register_frame_info (registers entire section)
- *   - LLVM libunwind: __register_frame_info is a no-op stub!
- *     Must iterate FDEs and call __register_frame for each one.
+ *   - LLVM libunwind: if __register_frame_info is unavailable, iterate FDEs
+ *     and call __register_frame for each one.
  *
  * Fixes two IRIX rld limitations:
  *
@@ -56,8 +56,7 @@ static char __eh_frame_object[64] __attribute__((aligned(8)));
  *   [length:4][CIE_ptr:4][data...]     FDE: CIE_ptr != 0
  *   [0:4]                              Terminator
  *
- * __register_frame() takes a pointer to a single FDE and adds it
- * to libunwind's DwarfFDECache.
+ * This path is only used when GCC's __register_frame_info is unavailable.
  */
 static void __register_fdes_with_libunwind(const char *eh_frame) {
     const unsigned char *p = (const unsigned char *)eh_frame;
@@ -99,12 +98,14 @@ static void __eh_frame_init(void) {
     }
 
     /* Register .eh_frame with the unwinder.
-     * Try __register_frame first (LLVM libunwind — per-FDE registration).
-     * Fall back to __register_frame_info (GCC libgcc_s — whole-section). */
-    if (__register_frame) {
-        __register_fdes_with_libunwind(__EH_FRAME_BEGIN__);
-    } else if (__register_frame_info) {
+     * GCC libgcc_s exports both __register_frame_info and __register_frame,
+     * so backend detection cannot be based on __register_frame existing.
+     * Prefer GCC's whole-section API whenever it is present; only use the
+     * per-FDE __register_frame path as a fallback for libunwind-only runtimes. */
+    if (__register_frame_info) {
         __register_frame_info(__EH_FRAME_BEGIN__, __eh_frame_object);
+    } else if (__register_frame) {
+        __register_fdes_with_libunwind(__EH_FRAME_BEGIN__);
     }
 }
 
