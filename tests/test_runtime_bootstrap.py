@@ -18,6 +18,7 @@ def test_required_runtime_sources_are_tracked() -> None:
     required = [
         ROOT / "cross/lib/dso_handle.c",
         ROOT / "cross/lib/safe_mem.c",
+        ROOT / "cross/crt/eh_frame_reg.c",
         ROOT / "compat/runtime/libatomic_stub.c",
         ROOT / "compat/runtime/muloti4.c",
         ROOT / "compat/runtime/divti3.c",
@@ -41,6 +42,16 @@ def test_executable_linker_uses_libgcc_runtime() -> None:
     linker = (ROOT / "cross/bin/irix-ld").read_text()
     assert "-lsoft_float_stubs" not in linker
     assert 'LIBGCC_S_FLAG="-lgcc_s -lpthread"' in linker
+
+
+def test_runtime_builder_matches_linker_requirements() -> None:
+    builder = (ROOT / "scripts/build-runtime-objects.sh").read_text()
+    assert "eh_frame_reg.o" in builder
+    assert "dso_handle.o" in builder
+    assert "safe_mem.o" in builder
+    assert "dlmalloc.o" in builder
+    assert "libatomic.a" in builder
+    assert "libsoft_float_stubs.a" not in builder.split("EXPECTED=(", 1)[1]
 
 
 def test_real_cxx_wrapper_recognizes_cpp_sources() -> None:
