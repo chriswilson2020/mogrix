@@ -35,7 +35,7 @@
 # Configurable paths - set by mogrix setup-cross or environment
 SYSROOT="${IRIX_SYSROOT:-/opt/irix-sysroot}"
 STAGING="${SGUG_STAGING:-/opt/sgug-staging/usr/sgug}"
-LLD="${IRIX_LLD:-/home/edodd/projects/github/unxmaal/mogrix/tools/bin/ld.lld-irix-18}"
+LLD="${IRIX_LLD:-/opt/cross/bin/ld.lld-irix}"
 
 # Filter out flags that don't apply to clang/lld and detect -shared
 is_shared=0
@@ -52,34 +52,26 @@ for arg in "$@"; do
             filtered_args="$filtered_args $arg"
             ;;
         -static-libgcc)
-            # Skip GCC-specific flag - not meaningful for clang/lld
             ;;
         -rdynamic)
-            # Skip -rdynamic (GCC driver flag, LLD doesn't support it).
             ;;
         --export-dynamic)
-            # Allow if MOGRIX_ALLOW_EXPORT_DYNAMIC=1 (for plugin hosts like bitlbee).
             if [ "$MOGRIX_ALLOW_EXPORT_DYNAMIC" = "1" ]; then
                 filtered_args="$filtered_args --export-dynamic"
             fi
             ;;
         --no-undefined|-z,no-undefined|--no-undefined-version)
-            # Skip: IRIX libc has TLS refs that can't resolve at link time.
             ;;
         -melf32bsmip|-melf32bmip|-melf64bmip|-melf*)
-            # Skip GNU ld emulation flags — LLD uses target triple instead.
             ;;
         --print-search-dirs|-print-search-dirs)
-            # Skip — not supported by LLD.
             ;;
         --version-script=*|--version-script)
-            # Skip — LLD now suppresses version sections for IRIX internally.
             case "$arg" in
                 --version-script) skip_next=1 ;;
             esac
             ;;
         -soname,*)
-            # Convert -soname,name to -soname name (GNU ld format)
             soname_val="${arg#-soname,}"
             filtered_args="$filtered_args -soname $soname_val"
             ;;
@@ -93,14 +85,8 @@ if [ "$is_shared" = "1" ]; then
     CRTBEGIN=$STAGING/lib32/crtbeginS.o
     CRTEND=$STAGING/lib32/crtendS.o
     DSOHANDLE=$STAGING/lib32/dso_handle.o
-    # eh_frame_reg: .eh_frame registration + DW.ref personality fixup.
-    # Same object as executables (already PIC). Linked early so
-    # __EH_FRAME_BEGIN__ is near the start of .eh_frame.
-    # Uses weak refs — harmless for pure C shared libs.
-    # Skip for libgcc_s (provides __register_frame_info itself).
     EH_FRAME_REG=$STAGING/lib32/eh_frame_reg.o
 
-    # Find output file name for post-link fix-anon-relocs
     output_file=""
     next_is_output=0
     for a in $filtered_args; do
@@ -111,18 +97,11 @@ if [ "$is_shared" = "1" ]; then
         case "$a" in -o) next_is_output=1 ;; esac
     done
 
-    # Auto-link libgcc_s for quad-float builtins (__floatditf, __addtf3,
-    # __trunctfsf2, etc.) used by MIPS 128-bit long double. Without this,
-    # libs silently omit NEEDED libgcc_s.so.1 → "unresolvable symbol" on IRIX.
-    # libgcc_s needs pthread stubs — must link libpthread alongside.
-    # Skip for libgcc_s itself to avoid circular dependency.
     LIBGCC_S_FLAG="-lgcc_s -lpthread"
     case "$filtered_args" in
         *libgcc_s*) LIBGCC_S_FLAG="" ; EH_FRAME_REG="" ;;
     esac
 
-    # BFD ld fallback for packages with GNU as objects that LLD rejects
-    # (e.g., libffi: LOCAL NOTYPE labels after GLOBAL symbols → "invalid binding: 0")
     GNULD="${IRIX_GNULD:-/opt/cross/bin/mips-sgi-irix6.5-ld.bfd}"
     if [ "$MOGRIX_USE_BFDLD_SHARED" = "1" ]; then
         LDSCRIPT=$STAGING/lib32/irix-shared.lds
@@ -142,20 +121,8 @@ if [ "$is_shared" = "1" ]; then
           $CRTEND
         rc=$?
     else
-    # All shared libraries use the same default base address (0x0f800000).
-    # mrqs rebases them to unique non-overlapping addresses at bundle time.
-    # This is more reliable than link-time hash-based assignment because:
-    #   1. No hash collisions — mrqs uses a proper allocator
-    #   2. Addresses are consistent within each bundle
-    #   3. Pre-resolve (fix-anon-relocs --pre-resolve-only) uses correct addresses
     IMAGE_BASE="0x0f800000"
 
-    # -m elf32btsmipn32_irix: Activate IRIX target defaults in LLD
-    #   (2-segment layout, no RELRO, writable .eh_frame, no version sections, etc.)
-    # -Bsymbolic: Keep global GOT under rld's ~4370 entry limit.
-    #   Binds ALL defined symbols locally (functions AND data objects).
-    #   Safe on IRIX: rld doesn't do copy relocations.
-    # --allow-shlib-undefined: IRIX libc TLS refs can't resolve at link time.
     $LLD \
       -m elf32btsmipn32_irix \
       --image-base=$IMAGE_BASE \
@@ -173,10 +140,6 @@ if [ "$is_shared" = "1" ]; then
     rc=$?
     fi
 
-    # Fix anonymous R_MIPS_REL32 relocations for IRIX rld compatibility.
-    # LLD emits these with sym_idx=0 (anonymous), but IRIX rld's
-    # fix_all_defineds() skips index 0. Uses two-symbol approach to ensure
-    # all entries survive rld's binary search + backward walk.
     FIX_ANON_RELOCS="${FIX_ANON_RELOCS:-$(dirname "$0")/fix-anon-relocs}"
     if [ "$rc" = "0" ] && [ -n "$output_file" ] && [ -f "$output_file" ]; then
         if ! python3 "$FIX_ANON_RELOCS" "$output_file" "$output_file" >/dev/null 2>&1; then
@@ -186,29 +149,19 @@ if [ "$is_shared" = "1" ]; then
 
     exit $rc
 else
-    # Executable: LLD with CRT files, dlmalloc, and safe_mem
     CRT1=$SYSROOT/usr/lib32/mips3/fixed/crt1.o
     CRTN=$SYSROOT/usr/lib32/mips3/fixed/crtn.o
     CRTBEGIN=$STAGING/lib32/crtbeginT.o
     CRTEND=$STAGING/lib32/crtendT.o
     DSOHANDLE=$STAGING/lib32/dso_handle.o
-    # eh_frame_reg: .eh_frame registration + DW.ref personality fixup.
-    # Linked early (before user objects) so __EH_FRAME_BEGIN__ is at the
-    # start of .eh_frame. Uses weak refs — harmless for C programs.
     EH_FRAME_REG=$STAGING/lib32/eh_frame_reg.o
-    # dlmalloc: mmap-based allocator that bypasses IRIX brk heap limit.
-    # Linked ONLY into executables — shared libs leave malloc/free undefined
-    # so rld resolves to the exe's single dlmalloc (prevents cross-heap abort).
     if [ "$MOGRIX_NO_DLMALLOC" = "1" ]; then
         DLMALLOC=""
     else
         DLMALLOC=$STAGING/lib32/dlmalloc.o
     fi
-    # safe_mem: Byte-safe memory/string functions. IRIX libc/libstdc++ optimized
-    # versions use word-aligned reads that overread past buffer end → SIGSEGV.
     SAFEMEM=$STAGING/lib32/safe_mem.o
 
-    # Find output file name for post-link fix-anon-relocs
     output_file=""
     next_is_output=0
     for a in $filtered_args; do
@@ -219,15 +172,8 @@ else
         case "$a" in -o) next_is_output=1 ;; esac
     done
 
-    # Executables need the same quad-float compiler runtime as shared objects.
-    # The old libsoft_float_stubs.a path predates the current libgcc_s runtime,
-    # which already provides the required compiler-rt soft-float builtins.
     LIBGCC_S_FLAG="-lgcc_s -lpthread"
 
-    # -m elf32btsmipn32_irix: Activate IRIX target defaults in LLD.
-    # --export-dynamic-symbol=__rld_obj_head: IRIX rld symbol from crt1.o.
-    # LLD doesn't export COMMON symbols to .dynsym by default.
-    # libC.so.2 and libGLcore.so reference it.
     $LLD \
       -m elf32btsmipn32_irix \
       --allow-shlib-undefined \
@@ -249,14 +195,6 @@ else
       $CRTN
     rc=$?
 
-    # Fix anonymous R_MIPS_REL32 relocations for IRIX rld compatibility.
-    # IRIX rld does NOT apply R_MIPS_REL32 relocations in executables for
-    # typeinfo/RTTI pointers. LLD emits these with sym_idx=0 (anonymous).
-    # rld's fix_all_defineds() skips index 0 entirely, leaving C++ typeinfo
-    # vtable pointers un-relocated → SIGSEGV on first dynamic_cast.
-    # The same fix-anon-relocs tool used for shared libraries works here:
-    # repoints anonymous relocs to a defined symbol so rld processes them.
-    # See: docs/rld/rld_key_functions.c, docs/rld/rld_reloc_callers.c
     FIX_ANON_RELOCS="${FIX_ANON_RELOCS:-$(dirname "$0")/fix-anon-relocs}"
     if [ "$rc" = "0" ] && [ -n "$output_file" ] && [ -f "$output_file" ]; then
         if ! python3 "$FIX_ANON_RELOCS" "$output_file" "$output_file" >/dev/null 2>&1; then
