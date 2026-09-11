@@ -2,7 +2,7 @@
 # Build the fully patched LLVM 18 LLD required by Mogrix/IRIX.
 #
 # IMPORTANT: the canonical patch logic lives in lld-fixes/build-lld-irix.sh.
-# This wrapper also applies the IRIX InputFiles compatibility patch that the
+# This wrapper also applies the IRIX InputFiles compatibility fix that the
 # canonical builder documents but currently does not apply itself.
 
 set -euo pipefail
@@ -13,16 +13,11 @@ SRC="$BUILD_ROOT/llvm-project-18.1.3.src"
 DRIVER="$SRC/lld/ELF/Driver.cpp"
 INPUTFILES="$SRC/lld/ELF/InputFiles.cpp"
 CANONICAL="$ROOT/lld-fixes/build-lld-irix.sh"
-INPUT_PATCH="$ROOT/lld-fixes/02-inputfiles-mips-local-symbols.patch"
 BUILT="$ROOT/tools/bin/ld.lld-irix-18"
 DEST_DIR="/opt/cross/bin"
 
 if [[ ! -f "$CANONICAL" ]]; then
     echo "ERROR: canonical LLD builder missing: $CANONICAL" >&2
-    exit 1
-fi
-if [[ ! -f "$INPUT_PATCH" ]]; then
-    echo "ERROR: IRIX InputFiles patch missing: $INPUT_PATCH" >&2
     exit 1
 fi
 
@@ -41,29 +36,37 @@ fi
 echo "Building LLD with the Mogrix IRIX patch set..."
 bash "$CANONICAL"
 
-# The canonical script's README includes this patch, but its apply_patches()
-# implementation currently does not apply it. IRIX DSOs such as libpthread.so
-# contain local section symbols (.text, .data, .rel.dyn, etc.) in the global
-# part of the symbol table, which stock LLD rejects. Apply it idempotently and
-# rebuild only the affected LLD object plus relink.
 if [[ ! -f "$INPUTFILES" ]]; then
     echo "ERROR: LLVM InputFiles.cpp not found after canonical build" >&2
     exit 1
 fi
 
-if grep -q 'invalid local symbol' "$INPUTFILES" && ! grep -q 'emachine != EM_MIPS.*name.starts_with' "$INPUTFILES"; then
-    echo "Applying IRIX MIPS shared-library symbol-table compatibility patch..."
-    (
-        cd "$SRC"
-        patch -p1 < "$INPUT_PATCH"
-    )
+# IRIX DSOs such as libpthread.so contain local section symbols (.text, .data,
+# .rel.dyn, etc.) in the global part of the symbol table. Stock LLD rejects
+# that layout. Apply the same logic as lld-fixes/02-inputfiles-... but do it via
+# an exact source transformation because that historical patch file has a bad
+# hunk header and GNU patch rejects it as malformed.
+if ! grep -q 'IRIX shared libraries violate this' "$INPUTFILES"; then
+    echo "Applying IRIX MIPS shared-library symbol-table compatibility fix..."
+    python3 - "$INPUTFILES" <<'PY'
+from pathlib import Path
+import sys
 
-    echo "Incrementally rebuilding LLD after InputFiles patch..."
+p = Path(sys.argv[1])
+s = p.read_text()
+old = '''    StringRef name = CHECK(sym.getName(stringTable), this);\n    if (sym.getBinding() == STB_LOCAL) {\n      errorOrWarn(toString(this) + ": invalid local symbol '" + name +\n                  "' in global part of symbol table");\n      continue;\n    }\n'''
+new = '''    StringRef name = CHECK(sym.getName(stringTable), this);\n    if (sym.getBinding() == STB_LOCAL) {\n      // IRIX shared libraries violate the usual ELF symbol ordering and place\n      // local section symbols such as .text/.data in the global part of the\n      // symbol table. IRIX DSOs use OSABI 0, so key this exception to MIPS and\n      // section-style names rather than ELFOSABI_IRIX.\n      if (emachine != EM_MIPS || !name.starts_with("."))\n        errorOrWarn(toString(this) + ": invalid local symbol '" + name +\n                    "' in global part of symbol table");\n      continue;\n    }\n'''
+if old not in s:
+    raise SystemExit("ERROR: expected LLVM 18 SharedFile::parse local-symbol block not found")
+p.write_text(s.replace(old, new, 1))
+PY
+
+    echo "Incrementally rebuilding LLD after InputFiles fix..."
     ninja -C "$SRC/build" lld
     cp "$SRC/build/bin/lld" "$BUILT"
     chmod +x "$BUILT"
 else
-    echo "IRIX MIPS shared-library symbol-table compatibility patch already present."
+    echo "IRIX MIPS shared-library symbol-table compatibility fix already present."
 fi
 
 if [[ ! -x "$BUILT" ]]; then
