@@ -3,8 +3,9 @@
 #
 # GCC's libstdc++ source tree is not laid out like the installed include tree:
 # public headers are split across include/std, include/c_global and several
-# subdirectories, while generated/selected target support headers such as
-# bits/os_defines.h and bits/cpu_defines.h come from libstdc++-v3/config.
+# subdirectories; libsupc++ contributes both top-level and bits/ headers; and
+# selected target support headers such as bits/os_defines.h and
+# bits/cpu_defines.h come from libstdc++-v3/config.
 # This script reconstructs the installed-style tree and then overlays Mogrix's
 # tracked IRIX-specific files.
 
@@ -16,6 +17,7 @@ CACHE="${MOGRIX_GCC_CACHE:-$ROOT/cross/build-runtime/gcc-9.5.0}"
 GCC_URL="${MOGRIX_GCC_URL:-https://ftp.gnu.org/gnu/gcc/gcc-9.5.0/gcc-9.5.0.tar.xz}"
 INCLUDE_SRC="$CACHE/libstdc++-v3/include"
 CONFIG_SRC="$CACHE/libstdc++-v3/config"
+SUPCXX_SRC="$CACHE/libstdc++-v3/libsupc++"
 DEST="$STAGING/include/c++/9"
 TARGET_BITS="$DEST/mips-sgi-irix6.5/bits"
 
@@ -33,6 +35,14 @@ have_support_headers() {
        -f "$CONFIG_SRC/cpu/generic/atomic_word.h" && \
        -f "$CONFIG_SRC/cpu/generic/atomicity_builtins/atomicity.h" && \
        -f "$CONFIG_SRC/os/generic/error_constants.h" ]]
+}
+
+have_supcxx_headers() {
+    [[ -f "$SUPCXX_SRC/exception_defines.h" && \
+       -f "$SUPCXX_SRC/exception" && \
+       -f "$SUPCXX_SRC/new" && \
+       -f "$SUPCXX_SRC/typeinfo" && \
+       -f "$SUPCXX_SRC/cxxabi.h" ]]
 }
 
 fetch_needed_source() {
@@ -66,9 +76,16 @@ fetch_needed_source() {
             "gcc-9.5.0/libstdc++-v3/config/os/generic" \
             "gcc-9.5.0/libstdc++-v3/config/cpu/generic"
     fi
+
+    if ! have_supcxx_headers; then
+        rm -rf "$SUPCXX_SRC"
+        tar -xJf "$tmp/gcc-9.5.0.tar.xz" \
+            -C "$(dirname "$CACHE")" \
+            "gcc-9.5.0/libstdc++-v3/libsupc++"
+    fi
 }
 
-if ! have_public_headers || ! have_support_headers; then
+if ! have_public_headers || ! have_support_headers || ! have_supcxx_headers; then
     fetch_needed_source
 fi
 
@@ -78,6 +95,10 @@ if ! have_public_headers; then
 fi
 if ! have_support_headers; then
     echo "ERROR: GCC target-support header source is incomplete: $CONFIG_SRC" >&2
+    exit 1
+fi
+if ! have_supcxx_headers; then
+    echo "ERROR: GCC libsupc++ header source is incomplete: $SUPCXX_SRC" >&2
     exit 1
 fi
 
@@ -93,6 +114,20 @@ for dir in bits backward decimal experimental ext parallel profile tr1 pstl; do
     if [[ -d "$INCLUDE_SRC/$dir" ]]; then
         cp -R "$INCLUDE_SRC/$dir" "$DEST/$dir"
     fi
+done
+
+# libsupc++ contributes installed C++ ABI/exception headers.  GCC's own
+# libsupc++ Makefile installs these five at the include root and the following
+# eight into bits/.  Copy the same set rather than waiting for missing-header
+# failures one at a time.
+for header in cxxabi.h exception initializer_list new typeinfo; do
+    install -m 0644 "$SUPCXX_SRC/$header" "$DEST/$header"
+done
+mkdir -p "$DEST/bits"
+for header in atomic_lockfree_defines.h cxxabi_forced.h exception_defines.h \
+              exception_ptr.h hash_bytes.h nested_exception.h exception.h \
+              cxxabi_init_exception.h; do
+    install -m 0644 "$SUPCXX_SRC/$header" "$DEST/bits/$header"
 done
 
 # Overlay the files Mogrix intentionally tracks for the IRIX target, including
@@ -121,7 +156,7 @@ install -m 0644 "$CONFIG_SRC/cpu/generic/atomicity_builtins/atomicity.h" \
 install -m 0644 "$CONFIG_SRC/os/generic/error_constants.h" \
     "$TARGET_BITS/error_constants.h"
 
-for header in cstdio stdexcept vector string; do
+for header in cstdio stdexcept vector string exception new typeinfo cxxabi.h; do
     if [[ ! -f "$DEST/$header" ]]; then
         echo "ERROR: missing installed libstdc++ header: $DEST/$header" >&2
         exit 1
@@ -132,6 +167,13 @@ if [[ ! -f "$DEST/pstl/pstl_config.h" ]]; then
     echo "ERROR: missing installed PSTL support header: $DEST/pstl/pstl_config.h" >&2
     exit 1
 fi
+
+for header in exception_defines.h exception_ptr.h hash_bytes.h nested_exception.h exception.h; do
+    if [[ ! -f "$DEST/bits/$header" ]]; then
+        echo "ERROR: missing installed libsupc++ bits header: $DEST/bits/$header" >&2
+        exit 1
+    fi
+done
 
 for header in c++config.h os_defines.h cpu_defines.h cxxabi_tweaks.h atomic_word.h atomicity.h error_constants.h; do
     if [[ ! -f "$TARGET_BITS/$header" ]]; then
