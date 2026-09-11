@@ -40,25 +40,21 @@
 #define EH_RETURN_DATA_REGNO(N) ((N) < 4 ? (N) + 4 : INVALID_REGNUM)
 #define INVALID_REGNUM (~(unsigned int)0)
 
-/* N32 is ILP32 but uses 64-bit MIPS registers.  GCC's unwinder keeps a
-   per-DWARF-register byte-size table and uses that table when loading saved
-   registers from CFI locations.  Clang's generic MIPS implementation of
-   __builtin_init_dwarf_reg_size_table() initializes MIPS registers as 4 bytes,
-   which is wrong for N32: clang emits `sd`/`ld` saves for the 64-bit GPRs.
-   On big-endian IRIX this makes libgcc read the high 32 bits of a saved GPR;
-   for $ra that is normally zero, so the first unwind step produces IP=0.
-
-   Override the clang builtin while compiling GCC's unwind-dw2.c.  The N32
-   integer GPRs (0-31), FP registers (32-63), and HI/LO (64-65) are 64-bit.
-   Leave the remaining pseudo/status registers zero-sized unless/until they are
-   explicitly needed by CFI. */
+/* Clang's MIPS builtin initializes the DWARF register-size table as 4-byte
+   entries.  Keep that behaviour as the baseline for N32, but account for the
+   two registers we have directly observed clang saving with sd/ld in ordinary
+   N32 frames: $fp (r30) and $ra (r31).  This is intentionally narrow while we
+   validate the GCC unwinder on real IRIX hardware; marking all GPR/FPR slots
+   as 8 bytes caused the unwinder to crash on the second frame. */
 #define __builtin_init_dwarf_reg_size_table(TABLE) do { \
     int __mogrix_i; \
-    for (__mogrix_i = 0; __mogrix_i <= 65; ++__mogrix_i) \
-        (TABLE)[__mogrix_i] = 8; \
+    for (__mogrix_i = 0; __mogrix_i < __LIBGCC_DWARF_FRAME_REGISTERS__ + 1; ++__mogrix_i) \
+        (TABLE)[__mogrix_i] = 4; \
+    (TABLE)[30] = 8; \
+    (TABLE)[31] = 8; \
 } while (0)
 
-/* N32 pointers are 32-bit, but the machine word/register width is 64-bit. */
-#define __LIBGCC_UNITS_PER_WORD__ 8
+/* N32 remains an ILP32 ABI for libgcc's word/pointer model. */
+#define __LIBGCC_UNITS_PER_WORD__ 4
 
 #endif /* GCC_TCONFIG_H */
