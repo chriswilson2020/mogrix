@@ -25,7 +25,8 @@ have_public_headers() {
     [[ -f "$INCLUDE_SRC/std/vector" && \
        -f "$INCLUDE_SRC/std/stdexcept" && \
        -f "$INCLUDE_SRC/c_global/cstdio" && \
-       -f "$INCLUDE_SRC/pstl/pstl_config.h" ]]
+       -f "$INCLUDE_SRC/pstl/pstl_config.h" && \
+       -f "$INCLUDE_SRC/debug/assertions.h" ]]
 }
 
 have_support_headers() {
@@ -106,11 +107,13 @@ rm -rf "$DEST"
 mkdir -p "$DEST"
 
 # Installed libstdc++ puts the contents of include/std and include/c_global at
-# the top level of <c++/9>, while the supporting directories remain directories.
+# the top level of <c++/9>, while supporting include subdirectories remain
+# subdirectories. Keep this list aligned with GCC's installed header layout;
+# notably <debug/assertions.h> is included even in normal non-debug builds.
 cp -R "$INCLUDE_SRC/std"/. "$DEST"/
 cp -R "$INCLUDE_SRC/c_global"/. "$DEST"/
 
-for dir in bits backward decimal experimental ext parallel profile tr1 pstl; do
+for dir in bits backward debug decimal experimental ext parallel profile tr1 pstl; do
     if [[ -d "$INCLUDE_SRC/$dir" ]]; then
         cp -R "$INCLUDE_SRC/$dir" "$DEST/$dir"
     fi
@@ -163,10 +166,12 @@ for header in cstdio stdexcept vector string exception new typeinfo cxxabi.h; do
     fi
 done
 
-if [[ ! -f "$DEST/pstl/pstl_config.h" ]]; then
-    echo "ERROR: missing installed PSTL support header: $DEST/pstl/pstl_config.h" >&2
-    exit 1
-fi
+for header in pstl/pstl_config.h debug/assertions.h; do
+    if [[ ! -f "$DEST/$header" ]]; then
+        echo "ERROR: missing installed libstdc++ support header: $DEST/$header" >&2
+        exit 1
+    fi
+done
 
 for header in exception_defines.h exception_ptr.h hash_bytes.h nested_exception.h exception.h; do
     if [[ ! -f "$DEST/bits/$header" ]]; then
