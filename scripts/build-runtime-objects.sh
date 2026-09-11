@@ -6,6 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MOGRIX_DIR="$(dirname "$SCRIPT_DIR")"
 STAGING="${SGUG_STAGING:-/opt/sgug-staging/usr/sgug}"
+SYSROOT="${IRIX_SYSROOT:-/opt/irix-sysroot}"
 CROSS="${IRIX_CROSS_BINDIR:-/opt/cross/bin}"
 CC="${STAGING}/bin/irix-cc"
 AR="${CROSS}/llvm-ar"
@@ -40,6 +41,38 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 RUNTIME_INC="${MOGRIX_DIR}/compat/include/mogrix-compat/generic"
 
+# Runtime compatibility implementations must compile against the *native* IRIX
+# declarations first.  The public Mogrix wrapper headers intentionally shadow
+# libc headers for package builds, but using those wrappers while building the
+# wrappers' own implementation creates recursive/include-order failures on IRIX
+# (fd_set during sys/bsd_types.h, and then missing libc/socket declarations).
+# Put the sysroot headers first and make the Mogrix generic directory an
+# -idirafter fallback: native headers win when IRIX has one, while missing
+# headers such as <spawn.h> are still supplied by Mogrix.
+RUNTIME_CFLAGS=(
+    --target=mips-sgi-irix6.5
+    --sysroot="$SYSROOT"
+    -mabi=n32
+    -march=mips3
+    -mxgot
+    -fno-stack-protector
+    -U_MIPS_ISA
+    -D_MIPS_ISA=_MIPS_ISA_MIPS3
+    -D_SGI_SOURCE
+    -D_SGI_MP_SOURCE
+    -D_SGI_REENTRANT_FUNCTIONS
+    -Dsgi=1
+    -D__sgi=1
+    -D_COMPILER_VERSION=730
+    -D_LANGUAGE_C=1
+    -D_LONGLONG=1
+    -Dunix=1
+    -D__unix__=1
+    -D__unix=1
+    -isystem "$SYSROOT/usr/include"
+    -idirafter "$RUNTIME_INC"
+)
+
 echo "=== Mogrix Runtime Objects Builder ==="
 echo "Sources:  $MOGRIX_DIR"
 echo "Staging:  $STAGING/lib32"
@@ -56,6 +89,18 @@ build_obj() {
         log_fail "$name"
         cat "$TMPDIR/$name.err" >&2 || true
     fi
+}
+
+build_runtime_obj() {
+    local name="$1"
+    local src="$2"
+    shift 2
+    if "$RAW_CLANG" "${RUNTIME_CFLAGS[@]}" "$@" -c "$src" \
+        -o "$TMPDIR/$name" 2>"$TMPDIR/$name.err"; then
+        return 0
+    fi
+    cat "$TMPDIR/$name.err" >&2 || true
+    return 1
 }
 
 echo "[1/6] CRT and exception-registration objects..."
@@ -101,13 +146,11 @@ echo "[4/6] Static compatibility archives..."
 
 # libatomic is still required by packages that cause Clang to emit out-of-line
 # __atomic_* calls. It is independent from the compiler builtins in libgcc_s.
-if "$CC" -I"$RUNTIME_INC" -c "$MOGRIX_DIR/compat/runtime/libatomic_stub.c" \
-    -o "$TMPDIR/libatomic_stub.o" 2>"$TMPDIR/libatomic_stub.o.err"; then
+if build_runtime_obj libatomic_stub.o "$MOGRIX_DIR/compat/runtime/libatomic_stub.c"; then
     "$AR" rcs "$STAGING/lib32/libatomic.a" "$TMPDIR/libatomic_stub.o"
     log_ok libatomic.a
 else
     log_fail libatomic.a
-    cat "$TMPDIR/libatomic_stub.o.err" >&2 || true
 fi
 
 # The old libsoft_float_stubs.a is deliberately NOT built. Current Mogrix ships
@@ -123,11 +166,10 @@ for src in "$MOGRIX_DIR"/compat/runtime/*.c; do
         libatomic_stub|soft_float_stubs) continue ;;
     esac
     obj="$TMPDIR/${base}.o"
-    if "$CC" -I"$RUNTIME_INC" -c "$src" -o "$obj" 2>"$obj.err"; then
+    if build_runtime_obj "${base}.o" "$src"; then
         COMPAT_OBJS+=("$obj")
     else
         log_fail "libcompat.a (${base}.c)"
-        cat "$obj.err" >&2 || true
         compat_ok=false
     fi
 done
@@ -167,12 +209,27 @@ do
     fi
 done
 
-if [[ ${#COMPAT_SO_SRCS[@]} -gt 0 ]]; then
-    if "$CC" -shared -fPIC \
-        -I"$MOGRIX_DIR/compat/include" \
-        -I"$RUNTIME_INC" \
-        -I"$MOGRIX_DIR/patches/shared" \
-        "${COMPAT_SO_SRCS[@]}" -o "$TMPDIR/libmogrix_compat.so" \
+# Compile each implementation with native IRIX headers first, then pass only
+# objects to irix-cc for the shared-library link.  This keeps package-facing
+# wrapper headers out of the implementation build while preserving the custom
+# IRIX linker/CRT path.
+COMPAT_SO_OBJS=()
+compat_so_compile_ok=true
+for src in "${COMPAT_SO_SRCS[@]}"; do
+    base=$(basename "$src" .c)
+    obj="$TMPDIR/compat-so-${base}.o"
+    if build_runtime_obj "compat-so-${base}.o" "$src" -fPIC \
+        -I"$MOGRIX_DIR/patches/shared"; then
+        COMPAT_SO_OBJS+=("$obj")
+    else
+        log_fail "libmogrix_compat.so (compile $(basename "$src"))"
+        compat_so_compile_ok=false
+    fi
+done
+
+if $compat_so_compile_ok && [[ ${#COMPAT_SO_OBJS[@]} -gt 0 ]]; then
+    if "$CC" -shared "${COMPAT_SO_OBJS[@]}" \
+        -o "$TMPDIR/libmogrix_compat.so" \
         2>"$TMPDIR/libmogrix_compat.so.err"; then
         cp "$TMPDIR/libmogrix_compat.so" "$STAGING/lib32/libmogrix_compat.so"
         log_ok libmogrix_compat.so
