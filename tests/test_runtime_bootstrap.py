@@ -2,7 +2,8 @@
 
 These tests deliberately avoid requiring an IRIX sysroot or cross compiler. They
 catch the repository-level failures that made a clean checkout non-reproducible:
-missing runtime sources, stale soft-float staging requirements, and linker drift.
+missing runtime sources, stale soft-float staging requirements, linker drift,
+and losing the real C++ wrapper during setup.
 """
 
 from pathlib import Path
@@ -21,6 +22,7 @@ def test_required_runtime_sources_are_tracked() -> None:
         ROOT / "compat/runtime/muloti4.c",
         ROOT / "compat/runtime/divti3.c",
         ROOT / "cross/irix-shared.lds",
+        ROOT / "cross/bin/irix-cxx",
     ]
     missing = [str(path.relative_to(ROOT)) for path in required if not path.is_file()]
     assert not missing, f"missing tracked runtime sources: {missing}"
@@ -36,3 +38,15 @@ def test_executable_linker_uses_libgcc_runtime() -> None:
     linker = (ROOT / "cross/bin/irix-ld").read_text()
     assert "-lsoft_float_stubs" not in linker
     assert 'LIBGCC_S_FLAG="-lgcc_s -lpthread"' in linker
+
+
+def test_real_cxx_wrapper_recognizes_cpp_sources() -> None:
+    cxx = (ROOT / "cross/bin/irix-cxx").read_text()
+    assert "clang++" in cxx
+    assert "*.cpp|*.cxx|*.cc|*.C" in cxx
+
+
+def test_bootstrap_predeploys_real_cxx_wrapper() -> None:
+    bootstrap = (ROOT / "scripts/bootstrap-cross.sh").read_text()
+    assert 'cross/bin/irix-cxx' in bootstrap
+    assert 'install -m 0755' in bootstrap
