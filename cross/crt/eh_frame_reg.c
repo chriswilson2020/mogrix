@@ -22,6 +22,8 @@
  * is at the start of the merged .eh_frame section.
  */
 
+#include <unistd.h>
+
 /* Weak references — resolve to NULL if not present (pure C programs) */
 extern void __register_frame_info(const void *, void *) __attribute__((weak));
 extern void __register_frame(const void *) __attribute__((weak));
@@ -48,6 +50,12 @@ static const char __EH_FRAME_BEGIN__[]
  * 64 bytes provides margin. Not used by LLVM libunwind. */
 static char __eh_frame_object[64] __attribute__((aligned(8)));
 
+/* Temporary low-level diagnostics.  Use write(2) so this remains safe before
+ * stdio/C++ runtime initialisation.  Remove once the IRIX EH path is proven. */
+static void __eh_diag(const char *s, unsigned int n) {
+    (void)write(2, s, n);
+}
+
 /*
  * Walk .eh_frame section and register each FDE with LLVM libunwind.
  *
@@ -62,31 +70,31 @@ static void __register_fdes_with_libunwind(const char *eh_frame) {
     const unsigned char *p = (const unsigned char *)eh_frame;
 
     for (;;) {
-        /* Read 4-byte length */
         unsigned int length = *(const unsigned int *)p;
         if (length == 0)
-            break;  /* Terminator */
-
-        /* Extended length (0xFFFFFFFF) — skip, not expected on N32 */
+            break;
         if (length == 0xFFFFFFFF)
             break;
 
-        /* Read CIE_id/CIE_pointer at offset 4 */
-        unsigned int cie_id = *(const unsigned int *)(p + 4);
-
-        if (cie_id != 0) {
-            /* This is an FDE (CIE_pointer != 0) — register it */
-            __register_frame(p);
+        {
+            unsigned int cie_id = *(const unsigned int *)(p + 4);
+            if (cie_id != 0)
+                __register_frame(p);
         }
-        /* else: CIE record — skip */
 
-        /* Advance: length field (4 bytes) + record data (length bytes) */
         p += 4 + length;
     }
 }
 
 /* Constructor called from .ctors */
 static void __eh_frame_init(void) {
+    static const char init_msg[] = "mogrix: eh init\n";
+    static const char gcc_msg[] = "mogrix: registering gcc eh frames\n";
+    static const char unwind_msg[] = "mogrix: registering libunwind eh frames\n";
+    static const char none_msg[] = "mogrix: no eh registration backend\n";
+
+    __eh_diag(init_msg, sizeof(init_msg) - 1);
+
     /* Fix DW.ref personality pointers before .eh_frame registration.
      * IRIX rld resolved the GOT entries (function addresses) but left
      * the R_MIPS_REL32 targets (DW.ref data) as NULL. Copy from GOT. */
@@ -103,9 +111,13 @@ static void __eh_frame_init(void) {
      * Prefer GCC's whole-section API whenever it is present; only use the
      * per-FDE __register_frame path as a fallback for libunwind-only runtimes. */
     if (__register_frame_info) {
+        __eh_diag(gcc_msg, sizeof(gcc_msg) - 1);
         __register_frame_info(__EH_FRAME_BEGIN__, __eh_frame_object);
     } else if (__register_frame) {
+        __eh_diag(unwind_msg, sizeof(unwind_msg) - 1);
         __register_fdes_with_libunwind(__EH_FRAME_BEGIN__);
+    } else {
+        __eh_diag(none_msg, sizeof(none_msg) - 1);
     }
 }
 
