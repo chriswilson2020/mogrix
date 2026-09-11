@@ -64,9 +64,10 @@ class StagingManager:
     present before builds can proceed.
     """
 
-    # Base resources that must exist for any build
+    # Base resources that must exist for any build.  Quad/soft-float helpers
+    # are provided by the shipped libgcc_s.so.1 runtime; the historical
+    # libsoft_float_stubs.a archive is no longer a runtime prerequisite.
     REQUIRED_LIBS = [
-        "libsoft_float_stubs.a",
         "libatomic.a",
     ]
 
@@ -76,9 +77,8 @@ class StagingManager:
         "irix-compat.h",
     ]
 
-    # Runtime source files and their output libraries
+    # Runtime source files and their output libraries.
     RUNTIME_SOURCES = {
-        "soft_float_stubs.c": "libsoft_float_stubs.a",
         "libatomic_stub.c": "libatomic.a",
     }
 
