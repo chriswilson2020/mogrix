@@ -22,7 +22,8 @@ TARGET_BITS="$DEST/mips-sgi-irix6.5/bits"
 have_public_headers() {
     [[ -f "$INCLUDE_SRC/std/vector" && \
        -f "$INCLUDE_SRC/std/stdexcept" && \
-       -f "$INCLUDE_SRC/c_global/cstdio" ]]
+       -f "$INCLUDE_SRC/c_global/cstdio" && \
+       -f "$INCLUDE_SRC/pstl/pstl_config.h" ]]
 }
 
 have_support_headers() {
@@ -88,7 +89,7 @@ mkdir -p "$DEST"
 cp -R "$INCLUDE_SRC/std"/. "$DEST"/
 cp -R "$INCLUDE_SRC/c_global"/. "$DEST"/
 
-for dir in bits backward decimal experimental ext parallel profile tr1; do
+for dir in bits backward decimal experimental ext parallel profile tr1 pstl; do
     if [[ -d "$INCLUDE_SRC/$dir" ]]; then
         cp -R "$INCLUDE_SRC/$dir" "$DEST/$dir"
     fi
@@ -126,6 +127,11 @@ for header in cstdio stdexcept vector string; do
         exit 1
     fi
 done
+
+if [[ ! -f "$DEST/pstl/pstl_config.h" ]]; then
+    echo "ERROR: missing installed PSTL support header: $DEST/pstl/pstl_config.h" >&2
+    exit 1
+fi
 
 for header in c++config.h os_defines.h cpu_defines.h cxxabi_tweaks.h atomic_word.h atomicity.h error_constants.h; do
     if [[ ! -f "$TARGET_BITS/$header" ]]; then
