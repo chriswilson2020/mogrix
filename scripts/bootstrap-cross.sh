@@ -1,13 +1,14 @@
 #!/bin/bash
 # Reproducible clean bootstrap for the Mogrix IRIX cross environment.
 #
-# This works around the legacy setup-cross prerequisite cycle:
-#   setup-cross historically required libsoft_float_stubs.a before it had
-#   deployed irix-cc, while build-runtime-objects.sh needs irix-cc to create it.
+# This works around two legacy setup-cross problems in current main:
+#   1. setup-cross requires libsoft_float_stubs.a before it deploys irix-cc,
+#      while the runtime builder needs irix-cc.
+#   2. setup-cross does not deploy the tracked cross/bin/irix-cxx wrapper; it
+#      creates irix-cxx by copying irix-cc, which cannot compile .cpp/.cc/.cxx.
 #
-# Current Mogrix links the real soft-float/compiler runtime from libgcc_s.so.1.
-# The temporary empty archive below exists only to satisfy that old bootstrap
-# check long enough for setup-cross to deploy the actual toolchain and runtimes.
+# Current Mogrix links soft-float/compiler builtins from libgcc_s.so.1.  The
+# seeded archive below exists only to get through the stale setup-cross check.
 
 set -euo pipefail
 
@@ -21,7 +22,12 @@ if [[ ! -x "$AR" ]]; then
     exit 1
 fi
 
-mkdir -p "$STAGING/lib32"
+mkdir -p "$STAGING/bin" "$STAGING/lib32"
+
+# Predeploy the real C++ wrapper. setup-cross only synthesizes irix-cxx when the
+# destination is missing, so this prevents it from replacing C++ support with a
+# copy of the C-only wrapper.
+install -m 0755 "$ROOT/cross/bin/irix-cxx" "$STAGING/bin/irix-cxx"
 
 LEGACY_ARCHIVE="$STAGING/lib32/libsoft_float_stubs.a"
 if [[ ! -f "$LEGACY_ARCHIVE" ]]; then
@@ -41,4 +47,6 @@ echo "Building/deploying runtime objects..."
 echo
 
 echo "Bootstrap complete."
-echo "Next sanity check: compile and link a trivial C program with irix-cc."
+echo "C wrapper:   $STAGING/bin/irix-cc"
+echo "C++ wrapper: $STAGING/bin/irix-cxx"
+echo "Run scripts/test-cross-runtime.sh for compile/link smoke tests."
