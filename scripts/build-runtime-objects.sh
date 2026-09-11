@@ -36,7 +36,7 @@
 #   FROM compat/ (multiple dirs):
 #     libmogrix_compat.so   — Preloaded override for buggy libc functions
 #
-#   FROM cross/lib/:
+#   FROM cross/:
 #     irix-shared.lds       — BFD ld linker script (copied, not built)
 #
 
@@ -144,7 +144,6 @@ else
 fi
 
 # --- Linker support objects ---
-
 echo ""
 echo "[2/7] Linker support objects..."
 
@@ -172,12 +171,9 @@ else
 fi
 
 # --- dlmalloc ---
-
 echo ""
 echo "[3/7] dlmalloc (mmap-based allocator)..."
 
-# dlmalloc.o — NEVER link into shared libraries, executables only
-# Uses spin locks (MIPS ll/sc atomics) for thread safety
 if "$CC" -c -O2 \
     -DHAVE_MORECORE=0 -DHAVE_MMAP=1 \
     -DUSE_LOCKS=1 -DUSE_SPIN_LOCKS=1 \
@@ -191,11 +187,9 @@ else
 fi
 
 # --- Static archives ---
-
 echo ""
 echo "[4/7] Static archives..."
 
-# libsoft_float_stubs.a — 128-bit soft float stubs
 if "$CC" -c \
     "${MOGRIX_DIR}/compat/runtime/soft_float_stubs.c" \
     -o "${TMPDIR}/soft_float_stubs.o" 2>/dev/null; then
@@ -205,7 +199,6 @@ else
     log_fail "libsoft_float_stubs.a"
 fi
 
-# libatomic.a — Atomic operation stubs
 if [[ -f "${MOGRIX_DIR}/compat/runtime/libatomic_stub.c" ]]; then
     if "$CC" -c \
         "${MOGRIX_DIR}/compat/runtime/libatomic_stub.c" \
@@ -219,12 +212,10 @@ else
     log_info "libatomic_stub.c not found, skipping libatomic.a"
 fi
 
-# libcompat.a — All remaining compat/runtime/*.c files
 COMPAT_OBJS=""
 compat_ok=true
 for src in "${MOGRIX_DIR}/compat/runtime/"*.c; do
     base=$(basename "$src" .c)
-    # Skip files that go into their own archives
     if [[ "$base" == "soft_float_stubs" || "$base" == "libatomic_stub" ]]; then
         continue
     fi
@@ -244,13 +235,9 @@ elif [[ -n "$COMPAT_OBJS" ]]; then
 fi
 
 # --- libmogrix_compat.so ---
-
 echo ""
 echo "[5/7] libmogrix_compat.so (preloaded libc overrides)..."
 
-# Sources for the shared library — these override buggy IRIX libc functions
-# that are called from shared libraries (not just executables).
-# CRITICAL: No GLib/GTK deps allowed — this is preloaded into ALL binaries.
 COMPAT_SO_SRCS=""
 for src in \
     compat/stdlib/bsearch.c \
@@ -286,25 +273,21 @@ if [[ -n "$COMPAT_SO_SRCS" ]]; then
 fi
 
 # --- Linker script ---
-
 echo ""
 echo "[6/7] Linker script..."
 
-# irix-shared.lds — BFD ld linker script for standard 2-segment layout
-# (Needed when BFD ld is used as fallback; -z separate-code crashes rld)
-if [[ -f "${MOGRIX_DIR}/cross/lib/irix-shared.lds" ]]; then
-    cp "${MOGRIX_DIR}/cross/lib/irix-shared.lds" "${STAGING}/lib32/irix-shared.lds"
+# irix-shared.lds lives at cross/irix-shared.lds in the current tree.
+if [[ -f "${MOGRIX_DIR}/cross/irix-shared.lds" ]]; then
+    cp "${MOGRIX_DIR}/cross/irix-shared.lds" "${STAGING}/lib32/irix-shared.lds"
     log_ok "irix-shared.lds"
 else
     log_fail "irix-shared.lds (source not found)"
 fi
 
 # --- CRT version script ---
-
 echo ""
 echo "[7/7] CRT version script..."
 
-# crt-hide.ver — Forces CRT symbols local to prevent cross-library interposition
 if [[ -f "${MOGRIX_DIR}/cross/crt/crt-hide.ver" ]]; then
     cp "${MOGRIX_DIR}/cross/crt/crt-hide.ver" "${STAGING}/lib32/crt-hide.ver"
     log_ok "crt-hide.ver"
@@ -313,14 +296,12 @@ else
 fi
 
 # --- Summary ---
-
 echo ""
 echo "=== Results ==="
 echo ""
 echo "  Total: $TOTAL  Passed: $PASS  Failed: $FAIL"
 echo ""
 
-# Verify all expected files exist
 echo "Staging lib32 runtime objects:"
 EXPECTED=(
     crtbeginS.o crtendS.o crtbeginT.o crtendT.o
