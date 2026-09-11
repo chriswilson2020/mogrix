@@ -30,7 +30,7 @@ have_support_headers() {
        -f "$CONFIG_SRC/cpu/generic/cpu_defines.h" && \
        -f "$CONFIG_SRC/cpu/generic/cxxabi_tweaks.h" && \
        -f "$CONFIG_SRC/cpu/generic/atomic_word.h" && \
-       -f "$CONFIG_SRC/cpu/generic/atomicity.h" && \
+       -f "$CONFIG_SRC/cpu/generic/atomicity_builtins/atomicity.h" && \
        -f "$CONFIG_SRC/os/generic/error_constants.h" ]]
 }
 
@@ -59,7 +59,7 @@ fetch_needed_source() {
     fi
 
     if ! have_support_headers; then
-        mkdir -p "$CONFIG_SRC/os" "$CONFIG_SRC/cpu"
+        rm -rf "$CONFIG_SRC/os/generic" "$CONFIG_SRC/cpu/generic"
         tar -xJf "$tmp/gcc-9.5.0.tar.xz" \
             -C "$(dirname "$CACHE")" \
             "gcc-9.5.0/libstdc++-v3/config/os/generic" \
@@ -104,7 +104,8 @@ fi
 # libstdc++ include tree. GCC normally installs selected files from config/
 # into the target-specific bits directory. GCC 9 no longer carries an IRIX
 # os directory, so use its generic OS/CPU support around Mogrix's already
-# configured IRIX c++config.h.
+# configured IRIX c++config.h. For atomicity, GCC 9's generic implementation
+# lives in the atomicity_builtins subdirectory, not directly under cpu/generic.
 mkdir -p "$TARGET_BITS"
 install -m 0644 "$CONFIG_SRC/os/generic/os_defines.h" \
     "$TARGET_BITS/os_defines.h"
@@ -114,7 +115,7 @@ install -m 0644 "$CONFIG_SRC/cpu/generic/cxxabi_tweaks.h" \
     "$TARGET_BITS/cxxabi_tweaks.h"
 install -m 0644 "$CONFIG_SRC/cpu/generic/atomic_word.h" \
     "$TARGET_BITS/atomic_word.h"
-install -m 0644 "$CONFIG_SRC/cpu/generic/atomicity.h" \
+install -m 0644 "$CONFIG_SRC/cpu/generic/atomicity_builtins/atomicity.h" \
     "$TARGET_BITS/atomicity.h"
 install -m 0644 "$CONFIG_SRC/os/generic/error_constants.h" \
     "$TARGET_BITS/error_constants.h"
