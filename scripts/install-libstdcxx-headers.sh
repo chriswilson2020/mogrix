@@ -1,11 +1,10 @@
 #!/bin/bash
 # Install the GCC 9.5 libstdc++ headers expected by cross/bin/irix-cxx.
 #
-# The repository tracks IRIX-specific overrides/configuration under
-# cross/include/c++/9, but not the complete generic GCC libstdc++ header set.
-# A clean checkout therefore lacks fundamental headers such as <cstdio> and
-# <stdexcept>.  This script obtains the matching GCC 9.5.0 source headers and
-# overlays Mogrix's tracked IRIX-specific files on top.
+# GCC's libstdc++ source tree is not laid out like the installed include tree:
+# public headers are split across include/std, include/c_global and several
+# subdirectories.  This script reconstructs the installed-style tree and then
+# overlays Mogrix's tracked IRIX-specific files.
 
 set -euo pipefail
 
@@ -13,10 +12,16 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STAGING="${SGUG_STAGING:-/opt/sgug-staging/usr/sgug}"
 CACHE="${MOGRIX_GCC_CACHE:-$ROOT/cross/build-runtime/gcc-9.5.0}"
 GCC_URL="${MOGRIX_GCC_URL:-https://ftp.gnu.org/gnu/gcc/gcc-9.5.0/gcc-9.5.0.tar.xz}"
-GENERIC_HEADERS="$CACHE/libstdc++-v3/include"
+INCLUDE_SRC="$CACHE/libstdc++-v3/include"
 DEST="$STAGING/include/c++/9"
 
-if [[ ! -d "$GENERIC_HEADERS" ]]; then
+have_source_tree() {
+    [[ -f "$INCLUDE_SRC/std/vector" && \
+       -f "$INCLUDE_SRC/std/stdexcept" && \
+       -f "$INCLUDE_SRC/c_global/cstdio" ]]
+}
+
+if ! have_source_tree; then
     command -v curl >/dev/null 2>&1 || {
         echo "ERROR: curl is required to obtain GCC 9.5.0 headers" >&2
         exit 1
@@ -32,20 +37,30 @@ if [[ ! -d "$GENERIC_HEADERS" ]]; then
     trap 'rm -rf "$tmp"' EXIT
 
     curl -fL "$GCC_URL" -o "$tmp/gcc-9.5.0.tar.xz"
+    rm -rf "$CACHE/libstdc++-v3/include"
     tar -xJf "$tmp/gcc-9.5.0.tar.xz" \
         -C "$(dirname "$CACHE")" \
-        --strip-components=0 \
         "gcc-9.5.0/libstdc++-v3/include"
 fi
 
-if [[ ! -f "$GENERIC_HEADERS/cstdio" || ! -f "$GENERIC_HEADERS/stdexcept" ]]; then
-    echo "ERROR: GCC header source is incomplete: $GENERIC_HEADERS" >&2
+if ! have_source_tree; then
+    echo "ERROR: GCC header source is incomplete: $INCLUDE_SRC" >&2
     exit 1
 fi
 
 rm -rf "$DEST"
 mkdir -p "$DEST"
-cp -R "$GENERIC_HEADERS"/. "$DEST"/
+
+# Installed libstdc++ puts the contents of include/std and include/c_global at
+# the top level of <c++/9>, while the supporting directories remain directories.
+cp -R "$INCLUDE_SRC/std"/. "$DEST"/
+cp -R "$INCLUDE_SRC/c_global"/. "$DEST"/
+
+for dir in bits backward decimal experimental ext parallel profile tr1; do
+    if [[ -d "$INCLUDE_SRC/$dir" ]]; then
+        cp -R "$INCLUDE_SRC/$dir" "$DEST/$dir"
+    fi
+done
 
 # Overlay the files Mogrix intentionally tracks for the IRIX target, including
 # target bits/c++config.h and local header fixes such as ext/string_conversions.h.
