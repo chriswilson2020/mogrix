@@ -27,8 +27,9 @@ def test_required_runtime_sources_are_tracked() -> None:
         ROOT / "compat/runtime/spawn.c",
         ROOT / "cross/irix-shared.lds",
         ROOT / "cross/bin/irix-cxx",
+        ROOT / "cross/include/c++/9/mips-sgi-irix6.5",
     ]
-    missing = [str(path.relative_to(ROOT)) for path in required if not path.is_file()]
+    missing = [str(path.relative_to(ROOT)) for path in required if not path.exists()]
     assert not missing, f"missing tracked runtime sources: {missing}"
 
 
@@ -60,6 +61,8 @@ def test_real_cxx_wrapper_recognizes_cpp_sources() -> None:
     cxx = (ROOT / "cross/bin/irix-cxx").read_text()
     assert "clang++" in cxx
     assert "*.cpp|*.cxx|*.cc|*.C" in cxx
+    assert "$STAGING/include/c++/9" in cxx
+    assert "$STAGING/include/c++/9/mips-sgi-irix6.5" in cxx
 
 
 def test_clean_bootstrap_bypasses_legacy_setup_cross() -> None:
@@ -70,6 +73,8 @@ def test_clean_bootstrap_bypasses_legacy_setup_cross() -> None:
     assert 'libsoft_float_stubs.a' not in bootstrap
     assert 'cross/lib32/libgcc_s.so.1' not in bootstrap  # assembled path, not hard-coded dev path
     assert 'libgcc_s.so.1' in bootstrap
+    assert 'cross/include/c++' in bootstrap
+    assert '$STAGING/include/c++' in bootstrap
 
 
 def test_safe_hash_preserves_big_endian_n32_word_order() -> None:
