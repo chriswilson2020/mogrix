@@ -3,7 +3,7 @@
 #
 # This intentionally does not call `mogrix setup-cross`: current main checks for
 # libsoft_float_stubs.a before deploying irix-cc and also synthesizes irix-cxx
-# by copying the C wrapper.  Both behaviours are stale relative to the tracked
+# by copying the C wrapper. Both behaviours are stale relative to the tracked
 # libgcc_s runtime and the real cross/bin/irix-cxx wrapper.
 
 set -euo pipefail
@@ -13,6 +13,7 @@ STAGING="${SGUG_STAGING:-/opt/sgug-staging/usr/sgug}"
 STAGING_ROOT="$(dirname "$(dirname "$STAGING")")"
 SYSROOT="${IRIX_SYSROOT:-/opt/irix-sysroot}"
 CROSS="${IRIX_CROSS_BINDIR:-/opt/cross/bin}"
+OBJCOPY="$CROSS/mips-sgi-irix6.5-objcopy"
 
 need_file() {
     if [[ ! -e "$1" ]]; then
@@ -33,6 +34,33 @@ need_file "$SYSROOT/usr/lib32/libc.so"
 need_exec "$CROSS/clang"
 need_exec "$CROSS/ld.lld-irix"
 need_exec "$CROSS/llvm-ar"
+need_exec "$OBJCOPY"
+
+# LLD cannot process the IRIX .MIPS.events* sections and the associated
+# R_MIPS_SCN_DISP relocations. The old setup guide stripped crt1.o but copied
+# crtn.o unchanged; IRIX 6.5.15's crtn.o also contains .MIPS.events.init, so a
+# clean bootstrap must sanitize both startup objects.
+fix_crt() {
+    local name="$1"
+    local src="$SYSROOT/usr/lib32/mips3/$name"
+    local dst_dir="$SYSROOT/usr/lib32/mips3/fixed"
+    local dst="$dst_dir/$name"
+
+    need_file "$src"
+    mkdir -p "$dst_dir"
+
+    "$OBJCOPY" \
+        -R .MIPS.events.text \
+        -R .MIPS.events.init \
+        -R .MIPS.events \
+        "$src" "$dst"
+
+    echo "  CRT: $name"
+}
+
+echo "Preparing IRIX CRT objects for LLD..."
+fix_crt crt1.o
+fix_crt crtn.o
 
 mkdir -p \
     "$STAGING/bin" \
@@ -99,9 +127,9 @@ if [[ -f "$ROOT/cross/include/irix-compat.h" ]]; then
     install -m 0644 "$ROOT/cross/include/irix-compat.h" "$STAGING/include/irix-compat.h"
 fi
 
-# Only the IRIX-specific libstdc++ headers are tracked in the repository.  The
+# Only the IRIX-specific libstdc++ headers are tracked in the repository. The
 # generic GCC 9 headers (<cstdio>, <vector>, <stdexcept>, etc.) must come from
-# matching GCC 9.5.0 source.  Install them, then overlay Mogrix's target fixes.
+# matching GCC 9.5.0 source. Install them, then overlay Mogrix's target fixes.
 echo "Installing GCC 9.5.0 C++ headers..."
 bash "$ROOT/scripts/install-libstdcxx-headers.sh"
 
