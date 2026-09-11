@@ -2,9 +2,9 @@
  * Small libatomic compatibility layer for IRIX/MIPS n32.
  *
  * Correctness is preferred over lock-free performance: operations are
- * serialized by one process-wide spin lock.  This supplies the libatomic ABI
+ * serialized by one process-wide spin lock. This supplies the libatomic ABI
  * expected by software compiled with Clang when an operation is not emitted
- * inline for the target.  Memory-order arguments are accepted but the global
+ * inline for the target. Memory-order arguments are accepted but the global
  * lock provides stronger (sequentially consistent) ordering.
  */
 
@@ -63,6 +63,12 @@ int mogrix_atomic_compare_exchange(size_t n, volatile void *mem, void *expected,
     __asm__("__atomic_compare_exchange");
 int mogrix_atomic_is_lock_free(size_t n, const volatile void *mem)
     __asm__("__atomic_is_lock_free");
+void mogrix_atomic_thread_fence(int order) __asm__("__atomic_thread_fence");
+void mogrix_atomic_signal_fence(int order) __asm__("__atomic_signal_fence");
+int mogrix_atomic_test_and_set(volatile void *mem, int order)
+    __asm__("__atomic_test_and_set");
+void mogrix_atomic_clear(volatile void *mem, int order)
+    __asm__("__atomic_clear");
 
 void mogrix_atomic_load(size_t n, const volatile void *mem, void *ret, int order)
 {
@@ -113,6 +119,32 @@ int mogrix_atomic_is_lock_free(size_t n, const volatile void *mem)
     return 0;
 }
 
+void mogrix_atomic_thread_fence(int order)
+{
+    (void)order;
+    __sync_synchronize();
+}
+
+void mogrix_atomic_signal_fence(int order)
+{
+    (void)order;
+    __asm__ __volatile__("" ::: "memory");
+}
+
+int mogrix_atomic_test_and_set(volatile void *mem, int order)
+{
+    u8 one = 1;
+    u8 old;
+    mogrix_atomic_exchange(1, mem, &one, &old, order);
+    return old != 0;
+}
+
+void mogrix_atomic_clear(volatile void *mem, int order)
+{
+    u8 zero = 0;
+    mogrix_atomic_store(1, mem, &zero, order);
+}
+
 #define DECL_LOAD_STORE(N, T) \
 T mogrix_atomic_load_##N(const volatile void *, int) __asm__("__atomic_load_" #N); \
 void mogrix_atomic_store_##N(volatile void *, T, int) __asm__("__atomic_store_" #N); \
@@ -145,12 +177,25 @@ T mogrix_atomic_##NAME##_fetch_##N(volatile void *p, T v, int o) \
 { T old, next; (void)o; mogrix_atomic_lock(); byte_copy(&old, (const void *)p, sizeof(T)); \
   next = (T)(old OP v); byte_copy((void *)p, &next, sizeof(T)); mogrix_atomic_unlock(); return next; }
 
+#define DECL_FETCH_NAND(N, T) \
+T mogrix_atomic_fetch_nand_##N(volatile void *, T, int) \
+    __asm__("__atomic_fetch_nand_" #N); \
+T mogrix_atomic_nand_fetch_##N(volatile void *, T, int) \
+    __asm__("__atomic_nand_fetch_" #N); \
+T mogrix_atomic_fetch_nand_##N(volatile void *p, T v, int o) \
+{ T old, next; (void)o; mogrix_atomic_lock(); byte_copy(&old, (const void *)p, sizeof(T)); \
+  next = (T)(~(old & v)); byte_copy((void *)p, &next, sizeof(T)); mogrix_atomic_unlock(); return old; } \
+T mogrix_atomic_nand_fetch_##N(volatile void *p, T v, int o) \
+{ T old, next; (void)o; mogrix_atomic_lock(); byte_copy(&old, (const void *)p, sizeof(T)); \
+  next = (T)(~(old & v)); byte_copy((void *)p, &next, sizeof(T)); mogrix_atomic_unlock(); return next; }
+
 #define DECL_FETCH_SET(N, T) \
 DECL_FETCH_OP(N, T, add, +) \
 DECL_FETCH_OP(N, T, sub, -) \
 DECL_FETCH_OP(N, T, and, &) \
 DECL_FETCH_OP(N, T, or, |) \
-DECL_FETCH_OP(N, T, xor, ^)
+DECL_FETCH_OP(N, T, xor, ^) \
+DECL_FETCH_NAND(N, T)
 
 DECL_FETCH_SET(1, u8)
 DECL_FETCH_SET(2, u16)
