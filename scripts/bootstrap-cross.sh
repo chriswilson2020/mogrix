@@ -91,29 +91,19 @@ link_runtime libstdc++.so.6 libstdc++.so
 link_runtime libc++.so.1 libc++.so
 link_runtime libc++abi.so.1 libc++abi.so
 
-echo "Deploying compatibility and C++ headers..."
-rm -rf \
-    "$STAGING/include/dicl-clang-compat" \
-    "$STAGING/include/mogrix-compat" \
-    "$STAGING/include/c++"
+echo "Deploying compatibility headers..."
+rm -rf "$STAGING/include/dicl-clang-compat" "$STAGING/include/mogrix-compat"
 cp -R "$ROOT/cross/include/dicl-clang-compat" "$STAGING/include/dicl-clang-compat"
 cp -R "$ROOT/compat/include/mogrix-compat" "$STAGING/include/mogrix-compat"
-
-# The real irix-cxx wrapper explicitly searches these tracked GCC 9 headers:
-#   $STAGING/include/c++/9
-#   $STAGING/include/c++/9/mips-sgi-irix6.5
-# A clean setup without them deploys a working wrapper that cannot compile even
-# a trivial C++ translation unit.
-if [[ -d "$ROOT/cross/include/c++" ]]; then
-    cp -R "$ROOT/cross/include/c++" "$STAGING/include/c++"
-else
-    echo "ERROR: tracked C++ headers missing: $ROOT/cross/include/c++" >&2
-    exit 1
-fi
-
 if [[ -f "$ROOT/cross/include/irix-compat.h" ]]; then
     install -m 0644 "$ROOT/cross/include/irix-compat.h" "$STAGING/include/irix-compat.h"
 fi
+
+# Only the IRIX-specific libstdc++ headers are tracked in the repository.  The
+# generic GCC 9 headers (<cstdio>, <vector>, <stdexcept>, etc.) must come from
+# matching GCC 9.5.0 source.  Install them, then overlay Mogrix's target fixes.
+echo "Installing GCC 9.5.0 C++ headers..."
+"$ROOT/scripts/install-libstdcxx-headers.sh"
 
 link_sysroot_dir() {
     local target="$1"
