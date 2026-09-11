@@ -40,21 +40,28 @@
 #define EH_RETURN_DATA_REGNO(N) ((N) < 4 ? (N) + 4 : INVALID_REGNUM)
 #define INVALID_REGNUM (~(unsigned int)0)
 
-/* Clang's MIPS builtin initializes the DWARF register-size table as 4-byte
-   entries.  Keep that behaviour as the baseline for N32, but account for the
-   two registers we have directly observed clang saving with sd/ld in ordinary
-   N32 frames: $fp (r30) and $ra (r31).  This is intentionally narrow while we
-   validate the GCC unwinder on real IRIX hardware; marking all GPR/FPR slots
-   as 8 bytes caused the unwinder to crash on the second frame. */
+/* N32 is unusual: pointers are 32-bit, but GPRs and _Unwind_Word are 64-bit.
+   GCC's unwinder therefore must keep register values in _Unwind_Word-sized
+   context slots rather than void * slots.  Without this, by-value register
+   state is truncated to 32 bits while walking a frame. */
+#define REG_VALUE_IN_UNWIND_CONTEXT 1
+#define ASSUME_EXTENDED_UNWIND_CONTEXT 1
+
+/* Clang's MIPS __unwind_word__ mode is 64-bit for N32, and clang emits sd/ld
+   saves for the integer GPRs.  The DWARF size table must describe those saved
+   slots as 8 bytes.  This includes $gp (r28), $fp (r30), and $ra (r31); leaving
+   $gp at 4 bytes on big-endian IRIX reads the zero high half and breaks the
+   following unwind step.  Keep non-GPR entries at the conservative 4-byte
+   baseline until target-specific FP/pseudo-register CFI requires otherwise. */
 #define __builtin_init_dwarf_reg_size_table(TABLE) do { \
     int __mogrix_i; \
     for (__mogrix_i = 0; __mogrix_i < __LIBGCC_DWARF_FRAME_REGISTERS__ + 1; ++__mogrix_i) \
         (TABLE)[__mogrix_i] = 4; \
-    (TABLE)[30] = 8; \
-    (TABLE)[31] = 8; \
+    for (__mogrix_i = 0; __mogrix_i < 32; ++__mogrix_i) \
+        (TABLE)[__mogrix_i] = 8; \
 } while (0)
 
-/* N32 remains an ILP32 ABI for libgcc's word/pointer model. */
-#define __LIBGCC_UNITS_PER_WORD__ 4
+/* GCC's machine word/register width for MIPS N32 is 64-bit. */
+#define __LIBGCC_UNITS_PER_WORD__ 8
 
 #endif /* GCC_TCONFIG_H */
