@@ -68,7 +68,9 @@ par_*.txt
 srpms/
 oldcrap/
 *-converted/
-compat/runtime/
+
+# compat/runtime contains source files required by the cross-runtime bootstrap.
+# Do NOT ignore it: a clean checkout must be able to build the runtime libraries.
 
 # Temporary conversion/build directories that might be created in repo
 tmp/
