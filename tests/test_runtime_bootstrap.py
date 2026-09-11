@@ -62,12 +62,14 @@ def test_real_cxx_wrapper_recognizes_cpp_sources() -> None:
     assert "*.cpp|*.cxx|*.cc|*.C" in cxx
 
 
-def test_bootstrap_predeploys_real_cxx_wrapper() -> None:
+def test_clean_bootstrap_bypasses_legacy_setup_cross() -> None:
     bootstrap = (ROOT / "scripts/bootstrap-cross.sh").read_text()
     assert 'cross/bin/irix-cxx' in bootstrap
     assert 'install -m 0755' in bootstrap
     assert 'uv run mogrix setup-cross' not in bootstrap
     assert 'libsoft_float_stubs.a' not in bootstrap
+    assert 'cross/lib32/libgcc_s.so.1' not in bootstrap  # assembled path, not hard-coded dev path
+    assert 'libgcc_s.so.1' in bootstrap
 
 
 def test_safe_hash_preserves_big_endian_n32_word_order() -> None:
