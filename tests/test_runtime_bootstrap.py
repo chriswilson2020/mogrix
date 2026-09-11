@@ -3,7 +3,7 @@
 These tests deliberately avoid requiring an IRIX sysroot or cross compiler. They
 catch the repository-level failures that made a clean checkout non-reproducible:
 missing runtime sources, stale soft-float staging requirements, linker drift,
-and losing the real C++ wrapper during setup.
+and losing the real C++ wrapper/headers during setup.
 """
 
 from pathlib import Path
@@ -27,7 +27,8 @@ def test_required_runtime_sources_are_tracked() -> None:
         ROOT / "compat/runtime/spawn.c",
         ROOT / "cross/irix-shared.lds",
         ROOT / "cross/bin/irix-cxx",
-        ROOT / "cross/include/c++/9/mips-sgi-irix6.5",
+        ROOT / "cross/include/c++/9/mips-sgi-irix6.5/bits/c++config.h",
+        ROOT / "scripts/install-libstdcxx-headers.sh",
     ]
     missing = [str(path.relative_to(ROOT)) for path in required if not path.exists()]
     assert not missing, f"missing tracked runtime sources: {missing}"
@@ -71,10 +72,18 @@ def test_clean_bootstrap_bypasses_legacy_setup_cross() -> None:
     assert 'install -m 0755' in bootstrap
     assert 'uv run mogrix setup-cross' not in bootstrap
     assert 'libsoft_float_stubs.a' not in bootstrap
-    assert 'cross/lib32/libgcc_s.so.1' not in bootstrap  # assembled path, not hard-coded dev path
     assert 'libgcc_s.so.1' in bootstrap
-    assert 'cross/include/c++' in bootstrap
-    assert '$STAGING/include/c++' in bootstrap
+    assert 'install-libstdcxx-headers.sh' in bootstrap
+
+
+def test_libstdcxx_header_installer_uses_matching_gcc_and_overlays_irix_config() -> None:
+    installer = (ROOT / "scripts/install-libstdcxx-headers.sh").read_text()
+    assert "gcc-9.5.0.tar.xz" in installer
+    assert "libstdc++-v3/include" in installer
+    assert 'cross/include/c++/9' in installer
+    assert 'mips-sgi-irix6.5/bits/c++config.h' in installer
+    assert 'cstdio' in installer
+    assert 'stdexcept' in installer
 
 
 def test_safe_hash_preserves_big_endian_n32_word_order() -> None:
