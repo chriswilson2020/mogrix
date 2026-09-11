@@ -64,6 +64,7 @@ fix_crt crtn.o
 
 mkdir -p \
     "$STAGING/bin" \
+    "$STAGING/lib" \
     "$STAGING/include" \
     "$STAGING/lib32/pkgconfig" \
     "$STAGING_ROOT/usr"
@@ -84,6 +85,11 @@ for tool in \
 do
     install_tool "$tool"
 done
+
+# fix-anon-relocs and mrqs import shared ELF helpers relative to bin/../lib.
+need_file "$ROOT/cross/lib/elf_utils.py"
+install -m 0644 "$ROOT/cross/lib/elf_utils.py" "$STAGING/lib/elf_utils.py"
+echo "  python: elf_utils.py"
 
 if [[ -f "$ROOT/cross/bin/irix-cxx-restrict-fix.h" ]]; then
     install -m 0644 "$ROOT/cross/bin/irix-cxx-restrict-fix.h" \
