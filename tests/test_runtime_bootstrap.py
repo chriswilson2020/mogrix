@@ -42,6 +42,8 @@ def test_executable_linker_uses_libgcc_runtime() -> None:
     linker = (ROOT / "cross/bin/irix-ld").read_text()
     assert "-lsoft_float_stubs" not in linker
     assert 'LIBGCC_S_FLAG="-lgcc_s -lpthread"' in linker
+    assert '/home/edodd/' not in linker
+    assert 'IRIX_LLD:-/opt/cross/bin/ld.lld-irix' in linker
 
 
 def test_runtime_builder_matches_linker_requirements() -> None:
@@ -64,6 +66,8 @@ def test_bootstrap_predeploys_real_cxx_wrapper() -> None:
     bootstrap = (ROOT / "scripts/bootstrap-cross.sh").read_text()
     assert 'cross/bin/irix-cxx' in bootstrap
     assert 'install -m 0755' in bootstrap
+    assert 'uv run mogrix setup-cross' not in bootstrap
+    assert 'libsoft_float_stubs.a' not in bootstrap
 
 
 def test_safe_hash_preserves_big_endian_n32_word_order() -> None:
